@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.env
+
+# Node
+node_modules/
+dist/
+
+# Cloned repos for analysis
+backend/workspace/
+
+# Editor
+.vscode/
