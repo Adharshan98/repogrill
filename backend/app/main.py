@@ -22,6 +22,9 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="RepoGrill API", lifespan=lifespan)
 
 
+MAX_CHUNKS = 2000  # embedding takes a while; personal projects are usually far below this
+
+
 class AnalyzeRequest(BaseModel):
     repo_url: str
 
@@ -60,6 +63,15 @@ def analyze(req: AnalyzeRequest):
         chunks = chunk_repo(path)
     finally:
         cleanup(path)
+
+    if not chunks:
+        raise HTTPException(status_code=400, detail="No supported source code found in this repo.")
+    if len(chunks) > MAX_CHUNKS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"This repo is too large ({len(chunks)} code pieces; the limit is {MAX_CHUNKS}). "
+                   "Try a smaller project, ideally one you built yourself.",
+        )
 
     repo_id = store.save_repo(req.repo_url, CodeIndex(chunks))
 
