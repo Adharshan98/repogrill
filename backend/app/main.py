@@ -36,6 +36,7 @@ def analyze(req: AnalyzeRequest):
         "file_count": len(files),
         "chunk_count": len(chunks),
         "languages": Counter(c.language for c in chunks).most_common(),
+        "chunk_kinds": Counter(c.kind for c in chunks).most_common(),
         "files": files,
         "sample_chunk": chunks[0].__dict__ if chunks else None,
     }
