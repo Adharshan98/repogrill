@@ -54,7 +54,7 @@ def save_interview(interview: Interview) -> None:
         row.done = interview.done
         row.turns = [
             TurnRow(position=i, topic=t.topic, question=t.question, answer=t.answer, score=t.score,
-                    got_right=t.got_right, missed=t.missed)
+                    got_right=t.got_right, missed=t.missed, ideal_answer=t.ideal_answer)
             for i, t in enumerate(interview.turns)
         ]
         db.add(row)
@@ -66,7 +66,7 @@ def load_interview(interview_id: str) -> Interview | None:
         row = db.get(InterviewRow, interview_id)
         if row is None:
             return None
-        turns = [Turn(t.topic, t.question, t.answer, t.score, t.got_right, t.missed) for t in row.turns]
+        turns = [Turn(t.topic, t.question, t.answer, t.score, t.got_right, t.missed, t.ideal_answer or "") for t in row.turns]
         repo_id, positions = row.repo_id, row.topic_positions
         state = (row.topic_number, row.follow_ups, row.done)
 

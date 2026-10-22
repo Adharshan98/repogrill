@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getScorecard } from '../api'
+import ModelAnswer from '../components/ModelAnswer'
 import ScoreBadge from '../components/ScoreBadge'
 
 export default function Scorecard({ interviewId, onRestart }) {
@@ -51,6 +52,7 @@ export default function Scorecard({ interviewId, onRestart }) {
                     <p className="mt-1 text-slate-400">Score {f.score}/10</p>
                     {f.got_right && <p className="text-emerald-300">✓ {f.got_right}</p>}
                     {f.missed && <p className="text-amber-300">✗ {f.missed}</p>}
+                    <ModelAnswer text={f.ideal_answer} />
                   </div>
                 ))}
               </div>

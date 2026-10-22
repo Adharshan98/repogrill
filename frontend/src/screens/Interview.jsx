@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { sendAnswer } from '../api'
+import ModelAnswer from '../components/ModelAnswer'
 import ScoreBadge from '../components/ScoreBadge'
 import { canListen, canSpeak, speak, stopSpeaking, useListener } from '../speech'
 
@@ -180,6 +181,7 @@ function Feedback({ feedback }) {
       <div className="flex flex-col gap-1">
         {feedback.got_right && <p className="text-emerald-300">✓ {feedback.got_right}</p>}
         {feedback.missed && <p className="text-amber-300">✗ {feedback.missed}</p>}
+        <ModelAnswer text={feedback.ideal_answer} />
       </div>
     </div>
   )

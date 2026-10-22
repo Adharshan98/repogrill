@@ -71,3 +71,25 @@ def test_list_interviews_shows_average(monkeypatch):
     assert entry["repo_url"] == "https://github.com/x/listed"
     assert entry["average_score"] == 7
     assert entry["done"] is False
+
+
+def test_init_db_adds_new_columns_to_old_databases(tmp_path, monkeypatch):
+    from sqlalchemy import create_engine, inspect, text
+
+    from app import db
+
+    # An "old" database whose turns table has no ideal_answer column yet
+    old = create_engine(f"sqlite:///{tmp_path}/old.db")
+    with old.begin() as conn:
+        conn.execute(text("CREATE TABLE turns (id INTEGER PRIMARY KEY, interview_id VARCHAR(16), position INTEGER, "
+                          "topic VARCHAR(600), question TEXT, answer TEXT, score INTEGER, got_right TEXT, missed TEXT)"))
+        conn.execute(text("INSERT INTO turns (id, interview_id, position, topic, question) "
+                          "VALUES (1, 'x', 0, 't', 'q?')"))
+
+    monkeypatch.setattr(db, "engine", old)
+    db.init_db()
+
+    columns = {c["name"] for c in inspect(old).get_columns("turns")}
+    assert "ideal_answer" in columns
+    with old.connect() as conn:
+        assert conn.execute(text("SELECT question FROM turns")).scalar() == "q?"  # old data kept

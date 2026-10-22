@@ -32,7 +32,8 @@ class FakeLLM:
     def chat(self, system, user, as_json=False):
         self.calls += 1
         if as_json:
-            return {"score": self.score, "got_right": "good", "missed": "", "follow_up": self.follow_up,
+            return {"score": self.score, "got_right": "good", "missed": "", "ideal_answer": "model answer",
+                    "follow_up": self.follow_up,
                     "question": f"follow-up {self.calls}?"}
         return f"question {self.calls}?"
 
@@ -154,3 +155,9 @@ def test_pick_topics_puts_test_files_last():
         make_chunk("src/main/Small.java", "Small", 10, kind="class"),
     ]
     assert [c.name for c in pick_topics(chunks)] == ["Small", "BigTests"]
+
+
+def test_ideal_answer_is_saved_on_the_turn(fake_llm):
+    interview = start_interview(FakeIndex([make_chunk("a.py", "one", 10)]))
+    submit_answer(interview, "answer")
+    assert interview.turns[0].ideal_answer == "model answer"

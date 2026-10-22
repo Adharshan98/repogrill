@@ -134,7 +134,8 @@ def answer(interview_id: str, req: AnswerRequest):
         raise HTTPException(status_code=502, detail=str(e))
     store.save_interview(interview)
     return {
-        "feedback": {"score": answered.score, "got_right": answered.got_right, "missed": answered.missed},
+        "feedback": {"score": answered.score, "got_right": answered.got_right, "missed": answered.missed,
+                     "ideal_answer": answered.ideal_answer},
         "done": interview.done,
         "topic": interview.turns[-1].topic,
         "question": next_question,
@@ -150,7 +151,7 @@ def get_interview(interview_id: str):
         "topics": [describe(c) for c in interview.topics],
         "turns": [
             {"topic": t.topic, "question": t.question, "answer": t.answer, "score": t.score,
-             "got_right": t.got_right, "missed": t.missed}
+             "got_right": t.got_right, "missed": t.missed, "ideal_answer": t.ideal_answer}
             for t in interview.turns
         ],
     }

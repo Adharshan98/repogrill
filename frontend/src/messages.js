@@ -3,7 +3,7 @@ export function turnsToMessages(turns) {
   return turns.flatMap((t) => {
     const question = { role: 'interviewer', text: t.question, topic: t.topic }
     if (!t.answer) return [question]
-    const feedback = { score: t.score, got_right: t.got_right, missed: t.missed }
+    const feedback = { score: t.score, got_right: t.got_right, missed: t.missed, ideal_answer: t.ideal_answer }
     return [question, { role: 'student', text: t.answer, feedback }]
   })
 }

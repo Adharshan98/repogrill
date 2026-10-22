@@ -25,6 +25,7 @@ class Turn:
     score: int | None = None   # 0-10, filled in after the answer is graded
     got_right: str = ""
     missed: str = ""
+    ideal_answer: str = ""  # what a strong answer would have said, to learn from
 
 
 @dataclass
@@ -135,6 +136,7 @@ def submit_answer(interview: Interview, answer: str) -> str | None:
         '  "got_right": one short sentence on what was correct ("" if nothing),\n'
         '  "missed": one short sentence on what was wrong or missing ("" if nothing). '
         "If the answer talks about different code than the question asked about, say so here,\n"
+        '  "ideal_answer": 2-3 sentences a strong candidate would say, based on the actual code,\n'
         '  "follow_up": true or false,\n'
         '  "question": the follow-up question if follow_up is true, otherwise "".\n'
         + ("Set follow_up to true if the answer was vague, partly wrong, or worth digging into."
@@ -146,6 +148,7 @@ def submit_answer(interview: Interview, answer: str) -> str | None:
     turn.score = parse_score(result.get("score"))
     turn.got_right = str(result.get("got_right") or "")
     turn.missed = str(result.get("missed") or "")
+    turn.ideal_answer = str(result.get("ideal_answer") or "")
 
     if can_follow_up and result.get("follow_up") and result.get("question"):
         interview.follow_ups += 1
@@ -174,7 +177,8 @@ def build_scorecard(interview: Interview, saved_study_plan: str | None = None) -
         topics.append({
             "topic": topic,
             "score": round(avg, 1),
-            "feedback": [{"question": t.question, "score": t.score, "got_right": t.got_right, "missed": t.missed}
+            "feedback": [{"question": t.question, "score": t.score, "got_right": t.got_right, "missed": t.missed,
+                          "ideal_answer": t.ideal_answer}
                          for t in turns],
         })
     topics.sort(key=lambda t: t["score"])  # weakest first

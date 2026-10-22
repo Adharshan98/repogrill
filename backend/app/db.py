@@ -3,7 +3,9 @@ import os
 from datetime import datetime, timezone
 
 from dotenv import load_dotenv
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, LargeBinary, String, Text, create_engine
+from sqlalchemy import (
+    JSON, Boolean, DateTime, ForeignKey, Integer, LargeBinary, String, Text, create_engine, inspect, text,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 
 load_dotenv()
@@ -80,7 +82,21 @@ class TurnRow(Base):
     score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     got_right: Mapped[str] = mapped_column(Text, default="")
     missed: Mapped[str] = mapped_column(Text, default="")
+    ideal_answer: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 def init_db() -> None:
+    """Create missing tables, then add any new optional columns to tables that already exist.
+
+    This is a tiny migration step: when we add a nullable column (like `ideal_answer`), databases
+    created by an older version get it automatically, without losing saved interviews.
+    """
     Base.metadata.create_all(engine)
+    existing = inspect(engine)
+    with engine.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            present = {c["name"] for c in existing.get_columns(table.name)}
+            for column in table.columns:
+                if column.name not in present and column.nullable:
+                    column_type = column.type.compile(dialect=engine.dialect)
+                    conn.execute(text(f'ALTER TABLE {table.name} ADD COLUMN {column.name} {column_type}'))
