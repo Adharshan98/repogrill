@@ -22,3 +22,7 @@ export const sendAnswer = (interviewId, answer) =>
   request(`/interviews/${interviewId}/answer`, { method: 'POST', body: JSON.stringify({ answer }) })
 
 export const getScorecard = (interviewId) => request(`/interviews/${interviewId}/scorecard`)
+
+export const listInterviews = () => request('/interviews')
+
+export const getInterview = (interviewId) => request(`/interviews/${interviewId}`)

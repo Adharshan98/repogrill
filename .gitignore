@@ -13,3 +13,6 @@ backend/workspace/
 
 # Editor
 .vscode/
+
+# Local database
+*.db

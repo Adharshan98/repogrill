@@ -111,3 +111,25 @@ def test_scorecard_sorts_weakest_first(monkeypatch):
     assert card["weak_areas"] == ["function `weak` in b.py"]
     assert card["strong_areas"] == ["function `strong` in a.py"]
     assert card["study_plan"] == "study plan"
+
+
+def test_scorecard_reuses_saved_study_plan(fake_llm):
+    index = FakeIndex([make_chunk("a.py", "one", 10)])
+    interview = start_interview(index)
+    submit_answer(interview, "answer")
+    calls_before = fake_llm.calls
+
+    card = build_scorecard(interview, saved_study_plan="saved plan")
+    assert card["study_plan"] == "saved plan"
+    assert fake_llm.calls == calls_before  # no new LLM call
+
+
+def test_pick_topics_prefers_named_code_over_line_chunks():
+    chunks = [
+        make_chunk("big.js", "", 60, kind="lines"),
+        make_chunk("a.py", "small_fn", 5),
+        make_chunk("other.js", "", 60, kind="lines"),
+    ]
+    picked = pick_topics(chunks)
+    assert picked[0].name == "small_fn"
+    assert len(picked) == 3  # line chunks still fill the remaining slots

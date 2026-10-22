@@ -36,12 +36,17 @@ class Interview:
     topic_number: int = 0
     follow_ups: int = 0
     done: bool = False
+    repo_id: str = ""
 
 
 def pick_topics(chunks: list[Chunk]) -> list[Chunk]:
-    """Choose the biggest functions/classes, at most one per file, so the interview covers different areas."""
+    """Choose the biggest functions/classes, at most one per file, so the interview covers different areas.
+
+    Real functions and classes come first; plain line-based chunks only fill any slots left over,
+    because a named function makes a much clearer interview topic than "lines 1-60".
+    """
     candidates = [c for c in chunks if c.kind in ("function", "class", "lines")]
-    candidates.sort(key=lambda c: c.end_line - c.start_line, reverse=True)
+    candidates.sort(key=lambda c: (c.kind != "lines", c.end_line - c.start_line), reverse=True)
     picked, seen_files = [], set()
     for chunk in candidates:
         if chunk.file not in seen_files:
@@ -142,8 +147,8 @@ def submit_answer(interview: Interview, answer: str) -> str | None:
     return ask_first_question(interview)
 
 
-def build_scorecard(interview: Interview) -> dict:
-    """Average the scores per topic and ask the LLM for a short study plan."""
+def build_scorecard(interview: Interview, saved_study_plan: str | None = None) -> dict:
+    """Average the scores per topic and ask the LLM for a short study plan (unless one was saved earlier)."""
     graded = [t for t in interview.turns if t.score is not None]
     by_topic = defaultdict(list)
     for t in graded:
@@ -162,8 +167,8 @@ def build_scorecard(interview: Interview) -> dict:
 
     overall = round(sum(t.score for t in graded) / len(graded), 1) if graded else 0
 
-    summary = ""
-    if graded:
+    summary = saved_study_plan or ""
+    if graded and not summary:
         notes = "\n".join(f"- {t['topic']}: {t['score']}/10. Missed: "
                           + "; ".join(f["missed"] for f in t["feedback"] if f["missed"]) for t in topics)
         summary = llm.chat(

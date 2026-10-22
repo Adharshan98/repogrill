@@ -20,9 +20,13 @@ class SearchResult:
 
 
 class CodeIndex:
-    def __init__(self, chunks: list[Chunk]):
+    def __init__(self, chunks: list[Chunk], vectors: np.ndarray | None = None):
+        """Embed the chunks, or reuse `vectors` that were saved earlier (one row per chunk)."""
         self.chunks = chunks
-        self.vectors = embed([chunk_to_text(c) for c in chunks]) if chunks else np.empty((0, 384))
+        if vectors is not None:
+            self.vectors = vectors
+        else:
+            self.vectors = embed([chunk_to_text(c) for c in chunks]) if chunks else np.empty((0, 384))
 
     def search(self, query: str, top_k: int = 5) -> list[SearchResult]:
         if not self.chunks:

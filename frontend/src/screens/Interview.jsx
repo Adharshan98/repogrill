@@ -2,11 +2,11 @@ import { useEffect, useRef, useState } from 'react'
 import { sendAnswer } from '../api'
 import ScoreBadge from '../components/ScoreBadge'
 
-export default function Interview({ repo, interview, onFinish }) {
+export default function Interview({ repoUrl, interview, initialMessages, onFinish }) {
   // Each message is either an interviewer question or the student's answer with its feedback
-  const [messages, setMessages] = useState([
-    { role: 'interviewer', text: interview.question, topic: interview.topics[0] },
-  ])
+  const [messages, setMessages] = useState(
+    initialMessages || [{ role: 'interviewer', text: interview.question, topic: interview.topics[0] }],
+  )
   const [answer, setAnswer] = useState('')
   const [sending, setSending] = useState(false)
   const [done, setDone] = useState(false)
@@ -50,7 +50,7 @@ export default function Interview({ repo, interview, onFinish }) {
   return (
     <div>
       <div className="mb-6 flex items-center justify-between text-sm text-slate-400">
-        <span className="truncate">{repo.repo_url.replace('https://github.com/', '')}</span>
+        <span className="truncate">{repoUrl.replace('https://github.com/', '')}</span>
         <span>
           Topic {Math.max(topicNumber, 1)} of {interview.topics.length}
         </span>

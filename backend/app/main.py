@@ -1,20 +1,25 @@
-import uuid
 from collections import Counter
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from app import store
+from app.db import init_db
 from app.services.chunker import chunk_repo
 from app.services.code_index import CodeIndex
 from app.services.interviewer import Interview, build_scorecard, describe, start_interview, submit_answer
 from app.services.llm import LLMError
 from app.services.repo_fetcher import RepoFetchError, cleanup, clone_repo
 
-app = FastAPI(title="RepoGrill API")
 
-# Analyzed repos and interviews, kept in memory for now (lost on restart; a database comes later)
-REPOS: dict[str, CodeIndex] = {}
-INTERVIEWS: dict[str, Interview] = {}
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()  # create the database tables on first start
+    yield
+
+
+app = FastAPI(title="RepoGrill API", lifespan=lifespan)
 
 
 class AnalyzeRequest(BaseModel):
@@ -23,6 +28,20 @@ class AnalyzeRequest(BaseModel):
 
 class AnswerRequest(BaseModel):
     answer: str
+
+
+def get_index(repo_id: str) -> CodeIndex:
+    index = store.load_index(repo_id)
+    if index is None:
+        raise HTTPException(status_code=404, detail="Repo not found. Analyze it first.")
+    return index
+
+
+def get_interview_or_404(interview_id: str) -> Interview:
+    interview = store.load_interview(interview_id)
+    if interview is None:
+        raise HTTPException(status_code=404, detail="Interview not found.")
+    return interview
 
 
 @app.get("/health")
@@ -42,8 +61,7 @@ def analyze(req: AnalyzeRequest):
     finally:
         cleanup(path)
 
-    repo_id = uuid.uuid4().hex[:8]
-    REPOS[repo_id] = CodeIndex(chunks)
+    repo_id = store.save_repo(req.repo_url, CodeIndex(chunks))
 
     files = sorted({c.file for c in chunks})
     return {
@@ -59,9 +77,6 @@ def analyze(req: AnalyzeRequest):
 
 @app.get("/repos/{repo_id}/search")
 def search(repo_id: str, q: str, top_k: int = 5):
-    index = REPOS.get(repo_id)
-    if index is None:
-        raise HTTPException(status_code=404, detail="Repo not found. Analyze it first.")
     return [
         {
             "file": r.chunk.file,
@@ -70,20 +85,19 @@ def search(repo_id: str, q: str, top_k: int = 5):
             "lines": f"{r.chunk.start_line}-{r.chunk.end_line}",
             "score": round(r.score, 3),
         }
-        for r in index.search(q, top_k)
+        for r in get_index(repo_id).search(q, top_k)
     ]
 
 
 @app.post("/repos/{repo_id}/interviews")
 def create_interview(repo_id: str):
-    index = REPOS.get(repo_id)
-    if index is None:
-        raise HTTPException(status_code=404, detail="Repo not found. Analyze it first.")
+    index = get_index(repo_id)
     try:
         interview = start_interview(index)
     except (LLMError, ValueError) as e:
         raise HTTPException(status_code=502 if isinstance(e, LLMError) else 400, detail=str(e))
-    INTERVIEWS[interview.id] = interview
+    interview.repo_id = repo_id
+    store.save_interview(interview)
     return {
         "interview_id": interview.id,
         "topics": [describe(c) for c in interview.topics],
@@ -91,11 +105,14 @@ def create_interview(repo_id: str):
     }
 
 
+@app.get("/interviews")
+def list_interviews():
+    return store.list_interviews()
+
+
 @app.post("/interviews/{interview_id}/answer")
 def answer(interview_id: str, req: AnswerRequest):
-    interview = INTERVIEWS.get(interview_id)
-    if interview is None:
-        raise HTTPException(status_code=404, detail="Interview not found.")
+    interview = get_interview_or_404(interview_id)
     if interview.done:
         raise HTTPException(status_code=400, detail="This interview is already finished.")
     answered = interview.turns[-1]
@@ -103,6 +120,7 @@ def answer(interview_id: str, req: AnswerRequest):
         next_question = submit_answer(interview, req.answer)
     except LLMError as e:
         raise HTTPException(status_code=502, detail=str(e))
+    store.save_interview(interview)
     return {
         "feedback": {"score": answered.score, "got_right": answered.got_right, "missed": answered.missed},
         "done": interview.done,
@@ -113,23 +131,29 @@ def answer(interview_id: str, req: AnswerRequest):
 
 @app.get("/interviews/{interview_id}")
 def get_interview(interview_id: str):
-    interview = INTERVIEWS.get(interview_id)
-    if interview is None:
-        raise HTTPException(status_code=404, detail="Interview not found.")
+    interview = get_interview_or_404(interview_id)
     return {
+        "repo_url": store.get_repo_url(interview.repo_id),
         "done": interview.done,
-        "turns": [{"topic": t.topic, "question": t.question, "answer": t.answer, "score": t.score} for t in interview.turns],
+        "topics": [describe(c) for c in interview.topics],
+        "turns": [
+            {"topic": t.topic, "question": t.question, "answer": t.answer, "score": t.score,
+             "got_right": t.got_right, "missed": t.missed}
+            for t in interview.turns
+        ],
     }
 
 
 @app.get("/interviews/{interview_id}/scorecard")
 def scorecard(interview_id: str):
-    interview = INTERVIEWS.get(interview_id)
-    if interview is None:
-        raise HTTPException(status_code=404, detail="Interview not found.")
+    interview = get_interview_or_404(interview_id)
     if not interview.done:
         raise HTTPException(status_code=400, detail="Finish the interview first.")
+    saved_plan = store.get_study_plan(interview_id)
     try:
-        return build_scorecard(interview)
+        card = build_scorecard(interview, saved_plan)
     except LLMError as e:
         raise HTTPException(status_code=502, detail=str(e))
+    if card["study_plan"] and not saved_plan:
+        store.save_study_plan(interview_id, card["study_plan"])
+    return card
