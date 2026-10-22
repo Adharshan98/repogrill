@@ -6,16 +6,23 @@ from pydantic import BaseModel
 
 from app.services.chunker import chunk_repo
 from app.services.code_index import CodeIndex
+from app.services.interviewer import Interview, describe, start_interview, submit_answer
+from app.services.llm import LLMError
 from app.services.repo_fetcher import RepoFetchError, cleanup, clone_repo
 
 app = FastAPI(title="RepoGrill API")
 
-# Analyzed repos, kept in memory for now (lost on restart; a database comes later)
+# Analyzed repos and interviews, kept in memory for now (lost on restart; a database comes later)
 REPOS: dict[str, CodeIndex] = {}
+INTERVIEWS: dict[str, Interview] = {}
 
 
 class AnalyzeRequest(BaseModel):
     repo_url: str
+
+
+class AnswerRequest(BaseModel):
+    answer: str
 
 
 @app.get("/health")
@@ -65,3 +72,49 @@ def search(repo_id: str, q: str, top_k: int = 5):
         }
         for r in index.search(q, top_k)
     ]
+
+
+@app.post("/repos/{repo_id}/interviews")
+def create_interview(repo_id: str):
+    index = REPOS.get(repo_id)
+    if index is None:
+        raise HTTPException(status_code=404, detail="Repo not found. Analyze it first.")
+    try:
+        interview = start_interview(index)
+    except (LLMError, ValueError) as e:
+        raise HTTPException(status_code=502 if isinstance(e, LLMError) else 400, detail=str(e))
+    INTERVIEWS[interview.id] = interview
+    return {
+        "interview_id": interview.id,
+        "topics": [describe(c) for c in interview.topics],
+        "question": interview.turns[-1].question,
+    }
+
+
+@app.post("/interviews/{interview_id}/answer")
+def answer(interview_id: str, req: AnswerRequest):
+    interview = INTERVIEWS.get(interview_id)
+    if interview is None:
+        raise HTTPException(status_code=404, detail="Interview not found.")
+    if interview.done:
+        raise HTTPException(status_code=400, detail="This interview is already finished.")
+    try:
+        next_question = submit_answer(interview, req.answer)
+    except LLMError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {
+        "done": interview.done,
+        "topic": interview.turns[-1].topic,
+        "question": next_question,
+    }
+
+
+@app.get("/interviews/{interview_id}")
+def get_interview(interview_id: str):
+    interview = INTERVIEWS.get(interview_id)
+    if interview is None:
+        raise HTTPException(status_code=404, detail="Interview not found.")
+    return {
+        "done": interview.done,
+        "turns": [{"topic": t.topic, "question": t.question, "answer": t.answer} for t in interview.turns],
+    }
