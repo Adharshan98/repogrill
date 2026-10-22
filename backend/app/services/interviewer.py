@@ -39,6 +39,17 @@ class Interview:
     repo_id: str = ""
 
 
+def is_test_file(path: str) -> bool:
+    """Tests matter, but interviewers ask about the main code first."""
+    parts = path.lower().split("/")
+    name = parts[-1]
+    return (
+        any(p in ("test", "tests", "__tests__", "spec") for p in parts[:-1])
+        or name.startswith("test_")
+        or any(marker in name for marker in ("_test.", ".test.", ".spec.", "tests.java", "test.java"))
+    )
+
+
 def pick_topics(chunks: list[Chunk]) -> list[Chunk]:
     """Choose the biggest functions/classes, at most one per file, so the interview covers different areas.
 
@@ -46,7 +57,10 @@ def pick_topics(chunks: list[Chunk]) -> list[Chunk]:
     because a named function makes a much clearer interview topic than "lines 1-60".
     """
     candidates = [c for c in chunks if c.kind in ("function", "class", "lines")]
-    candidates.sort(key=lambda c: (c.kind != "lines", c.end_line - c.start_line), reverse=True)
+    candidates.sort(
+        key=lambda c: (not is_test_file(c.file), c.kind != "lines", c.end_line - c.start_line),
+        reverse=True,
+    )
     picked, seen_files = [], set()
     for chunk in candidates:
         if chunk.file not in seen_files:

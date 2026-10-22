@@ -1,18 +1,21 @@
 """Walks a repository and splits its source files into chunks the AI can read.
 
 Why chunks? LLMs have a limited context window, so we can't send a whole repo at
-once. Later we'll embed each chunk and retrieve only the relevant ones (RAG).
+once. We embed each chunk and retrieve only the relevant ones (RAG).
 
-Python files are split by function and class using the `ast` module, so a function
-is never cut in half. Other languages fall back to fixed-size line chunks for now.
+Files are split by function and class so a function is never cut in half:
+Python with the built-in `ast` module; JavaScript, TypeScript and Java with tree-sitter.
+Other languages fall back to fixed-size line chunks.
 """
 import ast
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.services import syntax_chunker
+
 LANGUAGES = {
-    ".py": "Python", ".js": "JavaScript", ".jsx": "JavaScript", ".ts": "TypeScript",
-    ".tsx": "TypeScript", ".java": "Java", ".go": "Go", ".rb": "Ruby", ".php": "PHP",
+    ".py": "Python", ".js": "JavaScript", ".jsx": "JavaScript", ".mjs": "JavaScript", ".cjs": "JavaScript",
+    ".ts": "TypeScript", ".tsx": "TypeScript", ".java": "Java", ".go": "Go", ".rb": "Ruby", ".php": "PHP",
     ".c": "C", ".cpp": "C++", ".cs": "C#", ".kt": "Kotlin", ".rs": "Rust",
     ".sql": "SQL", ".html": "HTML", ".css": "CSS",
 }
@@ -52,25 +55,28 @@ def chunk_by_lines(lines: list[str], rel: str, lang: str) -> list[Chunk]:
     return chunks
 
 
-def chunk_python(source: str, lines: list[str], rel: str) -> list[Chunk]:
-    """One chunk per top-level function or class; leftover code becomes one "module" chunk."""
-    tree = ast.parse(source)
-    chunks = []
-    used = set()  # line numbers already inside a function/class chunk
-
-    for node in tree.body:
+def python_spans(source: str) -> list[syntax_chunker.Span]:
+    """Top-level functions and classes, including decorators like @app.get(...) above them."""
+    spans = []
+    for node in ast.parse(source).body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            # Include decorators like @app.get(...) that sit above the definition
             start = min([node.lineno] + [d.lineno for d in node.decorator_list])
-            end = node.end_lineno
             kind = "class" if isinstance(node, ast.ClassDef) else "function"
-            chunks.append(Chunk(rel, "Python", kind, node.name, start, end, "\n".join(lines[start - 1:end])))
-            used.update(range(start, end + 1))
+            spans.append((start, node.end_lineno, kind, node.name))
+    return spans
 
-    # Imports, constants, etc. that aren't inside any function or class
+
+def chunks_from_spans(spans, lines: list[str], rel: str, lang: str) -> list[Chunk]:
+    """One chunk per span; lines outside every span (imports, constants...) become one "module" chunk."""
+    chunks = []
+    used = set()
+    for start, end, kind, name in spans:
+        chunks.append(Chunk(rel, lang, kind, name, start, end, "\n".join(lines[start - 1:end])))
+        used.update(range(start, end + 1))
+
     rest = [line for i, line in enumerate(lines, start=1) if i not in used]
     if any(line.strip() for line in rest):
-        chunks.insert(0, Chunk(rel, "Python", "module", "", 1, len(lines), "\n".join(rest).strip()))
+        chunks.insert(0, Chunk(rel, lang, "module", "", 1, len(lines), "\n".join(rest).strip()))
     return chunks
 
 
@@ -78,13 +84,20 @@ def chunk_file(path: Path, root: Path) -> list[Chunk]:
     source = path.read_text(encoding="utf-8", errors="ignore")
     lines = source.splitlines()
     rel = path.relative_to(root).as_posix()
-    lang = LANGUAGES[path.suffix.lower()]
+    suffix = path.suffix.lower()
+    lang = LANGUAGES[suffix]
 
+    spans = []
     if lang == "Python":
         try:
-            return chunk_python(source, lines, rel)
+            spans = python_spans(source)
         except SyntaxError:
             pass  # broken or Python 2 file: fall back to line chunks
+    elif syntax_chunker.supports(suffix):
+        spans = syntax_chunker.find_spans(source, suffix)
+
+    if spans:
+        return chunks_from_spans(spans, lines, rel, lang)
     return chunk_by_lines(lines, rel, lang)
 
 

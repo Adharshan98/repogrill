@@ -133,3 +133,24 @@ def test_pick_topics_prefers_named_code_over_line_chunks():
     picked = pick_topics(chunks)
     assert picked[0].name == "small_fn"
     assert len(picked) == 3  # line chunks still fill the remaining slots
+
+
+@pytest.mark.parametrize("path, expected", [
+    ("src/test/java/app/VisitControllerTests.java", True),
+    ("backend/tests/test_api.py", True),
+    ("src/App.test.jsx", True),
+    ("src/user.spec.ts", True),
+    ("src/main/java/app/VisitController.java", False),
+    ("src/components/TestimonialCard.jsx", False),  # "Test" in a name is not a test file
+    ("backend/app/main.py", False),
+])
+def test_is_test_file(path, expected):
+    assert interviewer.is_test_file(path) is expected
+
+
+def test_pick_topics_puts_test_files_last():
+    chunks = [
+        make_chunk("src/test/BigTests.java", "BigTests", 300, kind="class"),
+        make_chunk("src/main/Small.java", "Small", 10, kind="class"),
+    ]
+    assert [c.name for c in pick_topics(chunks)] == ["Small", "BigTests"]
