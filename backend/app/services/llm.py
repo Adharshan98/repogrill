@@ -24,7 +24,7 @@ def chat(system: str, user: str, as_json: bool = False) -> str | dict:
         raise LLMError("GROQ_API_KEY is missing. Add it to backend/.env")
 
     body = {
-        "model": os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+        "model": os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
         "temperature": 0.4,
     }
