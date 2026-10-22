@@ -1,5 +1,6 @@
-"""Runs an interview: picks important code, asks about it, and follows up on answers."""
+"""Runs an interview: picks important code, asks about it, grades answers, and follows up."""
 import uuid
+from collections import defaultdict
 from dataclasses import dataclass, field
 
 from app.services.chunker import Chunk
@@ -8,11 +9,12 @@ from app.services import llm
 
 MAX_TOPICS = 4          # how many pieces of code the interview covers
 MAX_FOLLOW_UPS = 2      # extra questions allowed on the same topic
+RELATED_CHARS = 800     # max characters of each related chunk sent to the LLM
 
 SYSTEM_PROMPT = """You are a senior software engineer interviewing a student about a project they say they built.
 Ask about THEIR actual code: design choices, how it works, what could go wrong, and how they would improve it.
-Ask one clear, specific question at a time. Mention the function or file you are asking about.
-Never give away the answer inside the question."""
+Ask exactly ONE question at a time, in at most two short sentences, like a real interviewer speaking.
+Mention the function or file you are asking about. Never give away the answer inside the question."""
 
 
 @dataclass
@@ -20,6 +22,9 @@ class Turn:
     topic: str       # e.g. "clone_repo in services/repo_fetcher.py"
     question: str
     answer: str = ""
+    score: int | None = None   # 0-10, filled in after the answer is graded
+    got_right: str = ""
+    missed: str = ""
 
 
 @dataclass
@@ -86,23 +91,36 @@ def submit_answer(interview: Interview, answer: str) -> str | None:
 
     # RAG: fetch other code related to what the student said, so follow-ups can connect the dots
     related = [r.chunk for r in interview.index.search(answer, top_k=3) if r.chunk is not chunk][:2]
-    related_text = "\n\n".join(f"{describe(c)}:\n```\n{c.content}\n```" for c in related)
+    # Keep related code short: it's extra context, and the free LLM plan limits tokens per minute
+    related_text = "\n\n".join(f"{describe(c)}:\n```\n{c.content[:RELATED_CHARS]}\n```" for c in related)
 
-    if interview.follow_ups < MAX_FOLLOW_UPS:
-        history = "\n".join(f"Q: {t.question}\nA: {t.answer}" for t in interview.turns if t.topic == turn.topic)
-        prompt = (
-            f"Code for {describe(chunk)}:\n```\n{chunk.content}\n```\n\n"
-            f"Related code from the same project:\n{related_text or '(none)'}\n\n"
-            f"Conversation so far on this topic:\n{history}\n\n"
-            'Reply in JSON: {"follow_up": true or false, "question": "..."}. '
-            "Set follow_up to true if the answer was vague, wrong, or worth digging deeper into, "
-            "and write that follow-up question. Otherwise set follow_up to false and leave question empty."
-        )
-        decision = llm.chat(SYSTEM_PROMPT, prompt, as_json=True)
-        if decision.get("follow_up") and decision.get("question"):
-            interview.follow_ups += 1
-            interview.turns.append(Turn(turn.topic, decision["question"]))
-            return decision["question"]
+    # One LLM call both grades the answer and decides whether to follow up
+    history = "\n".join(f"Q: {t.question}\nA: {t.answer}" for t in interview.turns if t.topic == turn.topic)
+    can_follow_up = interview.follow_ups < MAX_FOLLOW_UPS
+    prompt = (
+        f"Code for {describe(chunk)}:\n```\n{chunk.content}\n```\n\n"
+        f"Related code from the same project:\n{related_text or '(none)'}\n\n"
+        f"Conversation so far on this topic:\n{history}\n\n"
+        "Grade ONLY the latest answer against the actual code above.\n"
+        "Reply in JSON with these keys:\n"
+        '  "score": 0-10 (0 = no answer or wrong, 5 = partly right, 10 = complete and precise),\n'
+        '  "got_right": one short sentence on what was correct ("" if nothing),\n'
+        '  "missed": one short sentence on what was wrong or missing ("" if nothing). '
+        "If the answer talks about different code than the question asked about, say so here,\n"
+        '  "follow_up": true or false,\n'
+        '  "question": the follow-up question if follow_up is true, otherwise "".\n'
+        + ("Set follow_up to true if the answer was vague, partly wrong, or worth digging into."
+           if can_follow_up else "Set follow_up to false: this topic is finished.")
+    )
+    result = llm.chat(SYSTEM_PROMPT, prompt, as_json=True)
+    turn.score = max(0, min(10, int(result.get("score", 0))))
+    turn.got_right = result.get("got_right", "")
+    turn.missed = result.get("missed", "")
+
+    if can_follow_up and result.get("follow_up") and result.get("question"):
+        interview.follow_ups += 1
+        interview.turns.append(Turn(turn.topic, result["question"]))
+        return result["question"]
 
     # Move on to the next topic
     interview.topic_number += 1
@@ -111,3 +129,43 @@ def submit_answer(interview: Interview, answer: str) -> str | None:
         interview.done = True
         return None
     return ask_first_question(interview)
+
+
+def build_scorecard(interview: Interview) -> dict:
+    """Average the scores per topic and ask the LLM for a short study plan."""
+    graded = [t for t in interview.turns if t.score is not None]
+    by_topic = defaultdict(list)
+    for t in graded:
+        by_topic[t.topic].append(t)
+
+    topics = []
+    for topic, turns in by_topic.items():
+        avg = sum(t.score for t in turns) / len(turns)
+        topics.append({
+            "topic": topic,
+            "score": round(avg, 1),
+            "feedback": [{"question": t.question, "score": t.score, "got_right": t.got_right, "missed": t.missed}
+                         for t in turns],
+        })
+    topics.sort(key=lambda t: t["score"])  # weakest first
+
+    overall = round(sum(t.score for t in graded) / len(graded), 1) if graded else 0
+
+    summary = ""
+    if graded:
+        notes = "\n".join(f"- {t['topic']}: {t['score']}/10. Missed: "
+                          + "; ".join(f["missed"] for f in t["feedback"] if f["missed"]) for t in topics)
+        summary = llm.chat(
+            "You are a friendly interview coach for a student preparing for placements.",
+            f"Interview results (score out of 10 per topic):\n{notes}\n\n"
+            "In 3 short bullet points, tell the student what to study or revise in their own code before "
+            "a real interview. Be specific and encouraging. Plain text, no headings.",
+        )
+
+    return {
+        "overall_score": overall,
+        "strong_areas": [t["topic"] for t in topics if t["score"] >= 7],
+        "weak_areas": [t["topic"] for t in topics if t["score"] < 5],
+        "topics": topics,
+        "study_plan": summary,
+    }

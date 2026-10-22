@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from app.services.chunker import chunk_repo
 from app.services.code_index import CodeIndex
-from app.services.interviewer import Interview, describe, start_interview, submit_answer
+from app.services.interviewer import Interview, build_scorecard, describe, start_interview, submit_answer
 from app.services.llm import LLMError
 from app.services.repo_fetcher import RepoFetchError, cleanup, clone_repo
 
@@ -98,11 +98,13 @@ def answer(interview_id: str, req: AnswerRequest):
         raise HTTPException(status_code=404, detail="Interview not found.")
     if interview.done:
         raise HTTPException(status_code=400, detail="This interview is already finished.")
+    answered = interview.turns[-1]
     try:
         next_question = submit_answer(interview, req.answer)
     except LLMError as e:
         raise HTTPException(status_code=502, detail=str(e))
     return {
+        "feedback": {"score": answered.score, "got_right": answered.got_right, "missed": answered.missed},
         "done": interview.done,
         "topic": interview.turns[-1].topic,
         "question": next_question,
@@ -116,5 +118,18 @@ def get_interview(interview_id: str):
         raise HTTPException(status_code=404, detail="Interview not found.")
     return {
         "done": interview.done,
-        "turns": [{"topic": t.topic, "question": t.question, "answer": t.answer} for t in interview.turns],
+        "turns": [{"topic": t.topic, "question": t.question, "answer": t.answer, "score": t.score} for t in interview.turns],
     }
+
+
+@app.get("/interviews/{interview_id}/scorecard")
+def scorecard(interview_id: str):
+    interview = INTERVIEWS.get(interview_id)
+    if interview is None:
+        raise HTTPException(status_code=404, detail="Interview not found.")
+    if not interview.done:
+        raise HTTPException(status_code=400, detail="Finish the interview first.")
+    try:
+        return build_scorecard(interview)
+    except LLMError as e:
+        raise HTTPException(status_code=502, detail=str(e))
