@@ -52,6 +52,15 @@ def pick_topics(chunks: list[Chunk]) -> list[Chunk]:
     return picked
 
 
+def parse_score(value) -> int:
+    """The LLM might send 7, "7", 7.5 or "7/10". Turn any of these into a whole number from 0 to 10."""
+    try:
+        number = float(str(value).split("/")[0].strip())
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(10, round(number)))
+
+
 def describe(chunk: Chunk) -> str:
     label = f"{chunk.kind} `{chunk.name}`" if chunk.name else f"lines {chunk.start_line}-{chunk.end_line}"
     return f"{label} in {chunk.file}"
@@ -113,9 +122,11 @@ def submit_answer(interview: Interview, answer: str) -> str | None:
            if can_follow_up else "Set follow_up to false: this topic is finished.")
     )
     result = llm.chat(SYSTEM_PROMPT, prompt, as_json=True)
-    turn.score = max(0, min(10, int(result.get("score", 0))))
-    turn.got_right = result.get("got_right", "")
-    turn.missed = result.get("missed", "")
+    if not isinstance(result, dict):
+        result = {}
+    turn.score = parse_score(result.get("score"))
+    turn.got_right = str(result.get("got_right") or "")
+    turn.missed = str(result.get("missed") or "")
 
     if can_follow_up and result.get("follow_up") and result.get("question"):
         interview.follow_ups += 1
